@@ -25,6 +25,8 @@ pub struct AsyncConnection {
     pub(crate) recorder: MessageRecorder,
     pub(crate) connection_handler: ConnectionHandler,
     pub(crate) connection_url: String,
+    /// Buffer for accumulating incoming data (tokenizer buffer)
+    pub(crate) read_buffer: Mutex<Vec<u8>>,
 }
 
 impl AsyncConnection {
@@ -42,6 +44,7 @@ impl AsyncConnection {
             recorder: MessageRecorder::from_env(),
             connection_handler: ConnectionHandler::default(),
             connection_url: address.to_string(),
+            read_buffer: Mutex::new(Vec::new()),
         };
 
         connection.establish_connection().await?;
@@ -88,6 +91,12 @@ impl AsyncConnection {
                         *socket = new_socket;
                     }
 
+                    // Clear the read buffer when reconnecting
+                    {
+                        let mut buffer = self.read_buffer.lock().await;
+                        buffer.clear();
+                    }
+
                     self.establish_connection().await?;
 
                     return Ok(());
@@ -130,41 +139,69 @@ impl AsyncConnection {
 
     /// Read a message from the connection
     pub(crate) async fn read_message(&self) -> Response {
-        // Read message length
-        let mut length_bytes = [0u8; 4];
-        {
-            let mut socket = self.socket.lock().await;
-            match socket.read_exact(&mut length_bytes).await {
-                Ok(_) => {}
-                Err(e) => {
-                    debug!("Error reading message length: {:?}", e);
-                    return Err(Error::Io(e));
+        loop {
+            // First, try to parse a complete message from the buffer
+            {
+                let mut buffer = self.read_buffer.lock().await;
+                
+                // Need at least 4 bytes for the message length header
+                if buffer.len() >= 4 {
+                    // Parse the message length from the first 4 bytes
+                    let message_length = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]) as usize;
+                    let total_length = 4 + message_length;
+                    
+                    // Check if we have a complete message in the buffer
+                    if buffer.len() >= total_length {
+                        // Extract the message data (skip the 4-byte length prefix)
+                        let data = buffer[4..total_length].to_vec();
+                        
+                        // Remove the processed message from the buffer
+                        buffer.drain(0..total_length);
+                        
+                        // Parse the message (use lossy conversion to handle non-UTF8 characters)
+                        let raw_string = String::from_utf8_lossy(&data).to_string();
+                        debug!("<- {raw_string:?}");
+
+                        // Record the response if debug logging is enabled
+                        if log::log_enabled!(log::Level::Debug) {
+                            trace::record_response(raw_string.clone()).await;
+                        }
+
+                        let message = ResponseMessage::from(&raw_string);
+                        self.recorder.record_response(&message);
+
+                        return Ok(message);
+                    }
                 }
             }
+            
+            // Need more data - read from socket
+            let mut temp_buffer = vec![0u8; 4096]; // Read up to 4KB at a time
+            let bytes_read = {
+                let mut socket = self.socket.lock().await;
+                match socket.read(&mut temp_buffer).await {
+                    Ok(0) => {
+                        // Connection closed
+                        debug!("Socket connection closed (read 0 bytes)");
+                        return Err(Error::Io(std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "Connection closed by peer"
+                        )));
+                    }
+                    Ok(n) => n,
+                    Err(e) => {
+                        debug!("Error reading from socket: {:?}", e);
+                        return Err(Error::Io(e));
+                    }
+                }
+            };
+            
+            // Append the new data to the buffer
+            {
+                let mut buffer = self.read_buffer.lock().await;
+                buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+            }
         }
-
-        let message_length = u32::from_be_bytes(length_bytes) as usize;
-
-        // Read message data
-        let mut data = vec![0u8; message_length];
-        {
-            let mut socket = self.socket.lock().await;
-            socket.read_exact(&mut data).await?;
-        }
-
-        let raw_string = String::from_utf8(data)?;
-        debug!("<- {raw_string:?}");
-
-        // Record the response if debug logging is enabled
-        if log::log_enabled!(log::Level::Debug) {
-            trace::record_response(raw_string.clone()).await;
-        }
-
-        let message = ResponseMessage::from(&raw_string);
-
-        self.recorder.record_response(&message);
-
-        Ok(message)
     }
 
     // sends server handshake
