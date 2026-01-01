@@ -55,6 +55,9 @@ pub(crate) mod connection;
 /// Common utilities shared across modules
 pub(crate) mod common;
 
+/// Display groups subscription support
+pub mod display_groups;
+
 /// Subscription types for streaming data
 pub mod subscriptions;
 

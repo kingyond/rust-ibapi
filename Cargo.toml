@@ -1,6 +1,6 @@
 [package]
 name = "ibapi"
-version = "2.2.2"
+version = "2.3.0"
 edition = "2021"
 authors = ["Wil Boayue <wil@wsbsolutions.com>"]
 description = "A Rust implementation of the Interactive Brokers TWS API, providing a reliable and user friendly interface for TWS and IB Gateway. Designed with a focus on simplicity and performance."
@@ -622,3 +622,13 @@ name = "record_interactions"
 path = "examples/record_interactions.rs"
 required-features = ["sync"]
 
+
+[[example]]
+name = "async_group_events"
+path = "examples/async/group_events.rs"
+required-features = ["async"]
+
+[[example]]
+name = "group_events"
+path = "examples/sync/group_events.rs"
+required-features = ["sync"]

@@ -20,6 +20,8 @@ use crate::accounts;
 use crate::accounts::types::{AccountGroup, AccountId, ContractId, ModelCode};
 use crate::accounts::{AccountSummaryResult, AccountUpdate, AccountUpdateMulti, FamilyCode, PnL, PnLSingle, PositionUpdate, PositionUpdateMulti};
 use crate::contracts::Contract;
+use crate::display_groups;
+use crate::display_groups::DisplayGroupUpdate;
 use crate::market_data::builder::MarketDataBuilder;
 use crate::market_data::TradingHours;
 use crate::orders::OrderBuilder;
@@ -523,6 +525,36 @@ impl Client {
     /// ```
     pub async fn family_codes(&self) -> Result<Vec<FamilyCode>, Error> {
         accounts::family_codes(self).await
+    }
+
+    /// Subscribes to TWS's Display Groups.
+    ///
+    /// Display Groups are a TWS-only feature (not available in IB Gateway).
+    /// They allow organizing contracts into color-coded groups in the TWS UI.
+    /// When subscribed, you receive updates whenever the user changes the contract
+    /// displayed in that group within TWS.
+    ///
+    /// # Arguments
+    /// * `group_id` - The ID of the group to subscribe to (1-9)
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ibapi::Client;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let client = Client::connect("127.0.0.1:7497", 100).await.expect("connection failed");
+    ///
+    ///     let mut subscription = client.subscribe_to_group_events(1).await.expect("error subscribing to group events");
+    ///
+    ///     while let Some(event) = subscription.next().await {
+    ///         println!("Received group event: {:?}", event);
+    ///     }
+    /// }
+    /// ```
+    pub async fn subscribe_to_group_events(&self, group_id: i32) -> Result<Subscription<DisplayGroupUpdate>, Error> {
+        display_groups::r#async::subscribe_to_group_events(self, group_id).await
     }
 
     // === Market Data ===
