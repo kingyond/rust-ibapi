@@ -2,7 +2,7 @@ use ibapi::accounts::types::{AccountGroup, AccountId, ContractId};
 use ibapi::contracts::Contract;
 use ibapi::orders::{Action, Order, PlaceOrder};
 use ibapi::Client;
-use ibapi_test::{rate_limit, ClientId, GATEWAY};
+use ibapi_test::{rate_limit, require_market_open, ClientId, GATEWAY};
 use serial_test::serial;
 
 async fn connect_and_get_account() -> (Client, AccountId, ClientId) {
@@ -149,6 +149,7 @@ async fn account_updates_multi() {
 #[tokio::test]
 #[serial(account)]
 async fn pnl_single_receives_updates() {
+    require_market_open();
     let (client, account, _client_id) = connect_and_get_account().await;
 
     // Resolve AAPL contract_id
@@ -167,13 +168,17 @@ async fn pnl_single_receives_updates() {
     rate_limit();
     let order_id = client.next_order_id();
     let mut sub = client.place_order(order_id, &contract, &buy).await.expect("buy failed");
-    while let Some(event) = sub.next().await {
-        if let PlaceOrder::OrderStatus(status) = &event {
-            if status.status == "Filled" {
-                break;
+    let filled = tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
+        while let Some(Ok(event)) = sub.next().await {
+            if let PlaceOrder::OrderStatus(status) = &event {
+                if status.status == "Filled" {
+                    return;
+                }
             }
         }
-    }
+    })
+    .await;
+    assert!(filled.is_ok(), "buy order did not fill within 5s");
 
     // Test pnl_single
     rate_limit();

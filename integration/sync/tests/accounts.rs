@@ -4,7 +4,7 @@ use ibapi::accounts::types::{AccountGroup, AccountId, ContractId};
 use ibapi::client::blocking::Client;
 use ibapi::contracts::Contract;
 use ibapi::orders::{Action, Order, PlaceOrder};
-use ibapi_test::{rate_limit, ClientId, GATEWAY};
+use ibapi_test::{rate_limit, require_market_open, ClientId, GATEWAY};
 use serial_test::serial;
 
 fn connect_and_get_account() -> (Client, AccountId, ClientId) {
@@ -142,6 +142,7 @@ fn account_updates_multi() {
 #[test]
 #[serial(account)]
 fn pnl_single_receives_updates() {
+    require_market_open();
     let (client, account, _client_id) = connect_and_get_account();
 
     // Resolve AAPL contract_id
@@ -160,11 +161,11 @@ fn pnl_single_receives_updates() {
     rate_limit();
     let order_id = client.next_order_id();
     let sub = client.place_order(order_id, &contract, &buy).expect("buy failed");
-    for event in sub {
-        if let PlaceOrder::OrderStatus(status) = &event {
-            if status.status == "Filled" {
-                break;
-            }
+    loop {
+        match sub.next_timeout(Duration::from_secs(5)) {
+            Some(PlaceOrder::OrderStatus(status)) if status.status == "Filled" => break,
+            Some(_) => continue,
+            None => panic!("buy order did not fill within 5s"),
         }
     }
 
